@@ -1,0 +1,57 @@
+n_agents: 5
+
+dataset:
+  name: cifar10
+  train_size: 128
+  val_size: 128
+  test_size: 1.0
+  num_cls_per_task: 2
+  num_task_per_life: 5
+
+task_model:
+  device: cuda
+  name: cifar10
+
+training:
+  batch_size: 64
+  n_epochs: 300
+  patience: 10
+  delta: 0.0
+  val_every_n_epoch: 10
+
+# TODO: tune this
+experience_replay:
+  train_size: 128
+  factor: 2
+
+data_valuation:
+  strategy: best_mean
+  threshold: 0.0
+  train_size: 128
+
+
+router:
+  n_heads: 5
+  strategy: neural
+  batch_size: 64
+  num_batches: 4
+  train_size: 128
+  val_size: 64
+  explore:
+    num_slates: 64
+    epsilon: 1.0
+    min_epsilon: 0.01
+    decay_rate: 0.8
+  training:
+    batch_size: 64
+    n_epochs: 200
+    patience: 10
+    delta: 0.0
+    val_every_n_epoch: 10
+  estimator_task_model:
+    name: cifar10
+    device: cuda
+
+defaults:
+  - override hydra/job_logging: none
+  - override hydra/hydra_logging: none
