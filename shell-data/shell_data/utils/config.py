@@ -35,11 +35,13 @@ class TrainingConfig:
 class ExperienceReplayConfig:
     train_size: int = 512
     factor: int = 1
+    buffer_size: int = 5000
 
 
 @dataclass
 class DataValuationConfig:
-    strategy: str = "mean_acc"
+    method: str = "oracle"  # choices = [oracle, clustering, performance]
+    metric: str = "past_task_val_acc"  # choices = ["oracle"]
     threshold: float = 0.0
     train_size: int = 512
 
@@ -54,6 +56,7 @@ class BoltzmanExplorationConfig:
 
 @dataclass
 class RouterConfig:
+    # choices = ["random", "neural", "no_routing", "oracle"]
     strategy: str = "random"
     # params for communication constraint
     batch_size: int = 1
@@ -87,3 +90,13 @@ def validate_config(cfg: ShELLDataSharingConfig):
     assert cfg.dataset.num_cls_per_task * cfg.dataset.num_task_per_life <= 10
     assert cfg.router.explore.num_slates == cfg.router.batch_size
     assert cfg.router.n_heads == cfg.n_agents
+
+    if isinstance(cfg.dataset.train_size, dict):
+        train_size = min(cfg.dataset.train_size.values())
+    else:
+        train_size = cfg.dataset.train_size
+    print(
+        f"train_size: {train_size}, num_cls_per_task: {cfg.dataset.num_cls_per_task}")
+    # NOTE: heuristic for the lower bound
+    train_size *= cfg.dataset.num_cls_per_task
+    assert cfg.router.num_batches * cfg.router.batch_size <= train_size

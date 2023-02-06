@@ -6,6 +6,8 @@ from typing import (
     Dict,
     List,
 )
+from shell_data.utils.utils import knn_dist
+import logging
 
 
 class Buffer(ABC):
@@ -24,6 +26,9 @@ class Buffer(ABC):
     def is_empty(self):
         return len(self) == 0
 
+    def update_tasks(self, task_idx):
+        pass
+
 
 class SupervisedLearningBuffer(Buffer):
     """
@@ -38,10 +43,26 @@ class SupervisedLearningBuffer(Buffer):
         label_type = torch.long if task == 'classification' else torch.float
         self.y = torch.empty(0, dtype=label_type)
 
-    def add_data(self, data):
+    def add_data(self, data, dedup=True):
+        if dedup and len(self) > 0:
+            data = self.dedup(data)
         x, y = data
         self.X = torch.cat((self.X, x))
         self.y = torch.cat((self.y, y))
+
+    def dedup(self, data, ret_mask=False) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Process data and remove the data that is already in the buffer.
+        """
+        x, y = data
+        distances = knn_dist(x, self.X, k=1)
+        # if distances = 0, then the data is already in the buffer and should be removed
+        eps = 0.1  # HACK: because of floating point error
+        mask = distances > eps
+        logging.debug(f"No. of duplicates: {len(mask) - mask.sum()}")
+        if ret_mask:
+            return mask
+        return x[mask], y[mask]
 
     def get_data(self, batch_size):
         """
@@ -54,10 +75,23 @@ class SupervisedLearningBuffer(Buffer):
     def __len__(self):
         return len(self.X)
 
+    def save_buffer(self, path_name):
+        torch.save(self.X, f"{path_name}_X.pt")
+        torch.save(self.y, f"{path_name}_y.pt")
+
+    def load(self, path_name):
+        self.X = torch.load(f"{path_name}_X.pt")
+        self.y = torch.load(f"{path_name}_y.pt")
+
 
 class ClassifcationBuffer(SupervisedLearningBuffer):
     def __init__(self, dim):
         super().__init__(dim, 'classification')
+
+    def get_cls_counts(self):
+        # HACK: assume that the num_cls = 10
+        NUM_CLASSES = 10
+        return {f"cls_{i}": (self.y == i).sum().item() for i in range(NUM_CLASSES)}
 
 
 class RegressionBuffer(SupervisedLearningBuffer):
@@ -73,8 +107,19 @@ class BalancedClassificationBuffer(Buffer):
         self.buffers = [ClassifcationBuffer(dim) for _ in range(num_classes)]
         self.past_tasks = []
 
+    def save_buffer(self, path):
+        for buffer_id, buffer in enumerate(self.buffers):
+            buffer.save_buffer(path_name=f'{path}_buffer_{buffer_id}')
+
+    def load(self, path):
+        for buffer_id, buffer in enumerate(self.buffers):
+            buffer.load(path_name=f'{path}_buffer_{buffer_id}')
+
     def update_tasks(self, task_idx: List[int]):
         self.past_tasks += task_idx
+
+    def get_cls_counts(self) -> dict:
+        return {f"cls_{i}": len(b) for i, b in enumerate(self.buffers)}
 
     def add_data(self, data):
         x, y = data
@@ -115,3 +160,10 @@ class BalancedClassificationBuffer(Buffer):
 
     def __len__(self):
         return sum([len(b) for b in self.buffers])
+
+
+def get_dataset_from_buffer(buffer: Buffer, data_size: int):
+    buf_x, buf_y = buffer.get_data(
+        batch_size=data_size
+    )
+    return torch.utils.data.TensorDataset(buf_x, buf_y)

@@ -13,18 +13,39 @@ from shell_data.utils.config import DatasetConfig
 DATASET_NUM_CLASSES = {
     "mnist": 10,
     "cifar10": 10,
+    "fashion_mnist": 10,
 }
+
+
+class LabelToTensor:
+    def __call__(self, label: int) -> torch.Tensor:
+        if isinstance(label, int):
+            label = torch.tensor(label)
+        return label
 
 
 def get_vision_dataset_subsets(dataset_name: Optional[str] = "mnist", train: Optional[bool] = True) -> List[torch.utils.data.Subset]:
     data_type = "train" if train else "test"
     if dataset_name == "mnist":
         dataset = torchvision.datasets.MNIST(
-            root='./data', train=train, download=True, transform=torchvision.transforms.ToTensor(),
+            root='./data/cv', train=train, download=True, transform=torchvision.transforms.ToTensor(),
+            target_transform=LabelToTensor(),
         )
     elif dataset_name == "cifar10":
         dataset = torchvision.datasets.CIFAR10(
-            root='./data', train=train, download=True, transform=torchvision.transforms.ToTensor())
+            root='./data/cv', train=train, download=True, transform=torchvision.transforms.ToTensor(),
+            target_transform=LabelToTensor(),
+        )
+    elif dataset_name == "fashion_mnist":
+        dataset = torchvision.datasets.FashionMNIST(
+            root='./data/cv', train=train, download=True, transform=torchvision.transforms.ToTensor(),
+            target_transform=LabelToTensor(),
+        )
+    elif dataset_name == "cifar100":
+        dataset = torchvision.datasets.CIFAR100(
+            root='./data/cv', train=train, download=True, transform=torchvision.transforms.ToTensor(),
+            target_transform=LabelToTensor(),
+        )
     else:
         raise ValueError(f"dataset {dataset_name} not supported")
     # dim of dataset (channel, height, width)
@@ -35,7 +56,7 @@ def get_vision_dataset_subsets(dataset_name: Optional[str] = "mnist", train: Opt
         # otherwise, create it
         try:
             subset = torch.load(
-                f'./data/{dataset_name}_{data_type}_cls={i}.pt')
+                f'./data/cv/{dataset_name}/{dataset_name}_{data_type}_cls={i}.pt')
         except:
             logging.debug(
                 f"creating subset for {dataset_name}_{data_type}_cls={i}.pt")
@@ -43,12 +64,34 @@ def get_vision_dataset_subsets(dataset_name: Optional[str] = "mnist", train: Opt
                 dataset.targets = torch.tensor(dataset.targets)
             subset = torch.utils.data.Subset(
                 dataset, torch.where(dataset.targets == i)[0])
-            torch.save(subset, f'./data/{dataset_name}_{data_type}_cls={i}.pt')
+            torch.save(
+                subset, f'./data/cv/{dataset_name}/{dataset_name}_{data_type}_cls={i}.pt')
 
         subsets.append(subset)
 
     logging.debug(f"subsets length: {[len(subset) for subset in subsets]}")
     return subsets
+
+
+def get_train_val_test_subsets(dataset_name):
+    test_subsets = get_vision_dataset_subsets(
+        dataset_name=dataset_name,
+        train=False,
+    )
+    train_val_subsets = get_vision_dataset_subsets(
+        dataset_name=dataset_name,
+        train=True,
+    )
+    train_subsets, val_subsets = [], []
+    for train_val_subset in train_val_subsets:
+        train_subset, val_subset = torch.utils.data.random_split(
+            train_val_subset, [0.9, 0.1])
+        # train_subset, val_subset = torch.utils.data.random_split(
+        #     train_val_subset, [0.5, 0.5])
+        train_subsets.append(train_subset)
+        val_subsets.append(val_subset)
+
+    return train_subsets, val_subsets, test_subsets
 
 
 def get_vision_dataset_subsets_save_memory(subsets: List[torch.utils.data.Subset], size: Optional[Union[int, float, Dict[int, int], Dict[int, float]]] = 1.0) -> List[torch.utils.data.Subset]:
@@ -78,7 +121,8 @@ def get_vision_dataset_subsets_save_memory(subsets: List[torch.utils.data.Subset
             subset, torch.randperm(len(subset))[:subset_size])
         sized_subsets.append(subset)
 
-    logging.debug(f"subsets length: {[len(subset) for subset in subsets]}")
+    logging.debug(
+        f"subsets length: {[len(subset) for subset in sized_subsets]} with provided size {size}")
     return sized_subsets
 
 
@@ -127,6 +171,7 @@ class LifelongDataset:
 
     def get_data_tasks(self, time: int, split: str) -> List[torch.utils.data.Subset]:
         task_indices = self.get_task_indices(time)
+        # logging.critical(f"Getting data {task_indices} for split {split}")
         if split == 'train':
             task_datasets = [self.train_datasets[i] for i in task_indices]
         elif split == 'val':
@@ -137,11 +182,29 @@ class LifelongDataset:
             raise ValueError(f"split {split} should be train, val or test")
         return task_datasets
 
-    def get_train_dataset(self, time: int) -> torch.utils.data.Dataset:
-        return torch.utils.data.ConcatDataset(self.get_data_tasks(time, 'train'))
+    def get_train_dataset(self, time: int, kind="one") -> torch.utils.data.Dataset:
+        def flatten_list(l): return [item for sublist in l for item in sublist]
+        if kind == "one":
+            return torch.utils.data.ConcatDataset(self.get_data_tasks(time, 'train'))
+        elif kind == "all":
+            return torch.utils.data.ConcatDataset(flatten_list([self.get_data_tasks(t, 'train') for t in range(time + 1)]))
+        else:
+            raise ValueError(f"kind {kind} should be one or all")
 
-    def get_val_dataset(self, time: int) -> torch.utils.data.Dataset:
-        return torch.utils.data.ConcatDataset(self.get_data_tasks(time, 'val'))
+    def get_val_dataset(self, time: int, kind="one") -> torch.utils.data.Dataset:
+        def flatten_list(l): return [item for sublist in l for item in sublist]
+        if kind == "one":
+            return torch.utils.data.ConcatDataset(self.get_data_tasks(time, 'val'))
+        elif kind == "all":
+            return torch.utils.data.ConcatDataset(flatten_list([self.get_data_tasks(t, 'val') for t in range(time + 1)]))
+        else:
+            raise ValueError(f"kind {kind} should be one or all")
 
-    def get_test_dataset(self, time: int) -> torch.utils.data.Dataset:
-        return torch.utils.data.ConcatDataset(self.get_data_tasks(time, 'test'))
+    def get_test_dataset(self, time: int, kind="one") -> torch.utils.data.Dataset:
+        def flatten_list(l): return [item for sublist in l for item in sublist]
+        if kind == "one":
+            return torch.utils.data.ConcatDataset(self.get_data_tasks(time, 'test'))
+        elif kind == "all":
+            return torch.utils.data.ConcatDataset(flatten_list([self.get_data_tasks(t, 'test') for t in range(time + 1)]))
+        else:
+            raise ValueError(f"kind {kind} should be one or all")

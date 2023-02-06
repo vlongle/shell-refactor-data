@@ -1,37 +1,35 @@
-n_agents: 5
+n_agents: 1
 
 dataset:
   name: cifar10
-  train_size: 128
-  val_size: 128
+  train_size: 512
+  val_size: 256
   test_size: 1.0
-  num_cls_per_task: 2
-  num_task_per_life: 5
+  num_cls_per_task: 10
+  num_task_per_life: 1
 
 task_model:
   device: cuda
   name: cifar10
 
 training:
-  batch_size: 64
+  batch_size: 128
   n_epochs: 300
   patience: 10
   delta: 0.0
   val_every_n_epoch: 10
 
-# TODO: tune this
 experience_replay:
-  train_size: 128
-  factor: 2
+  train_size: 256
 
 data_valuation:
   strategy: best_mean
   threshold: 0.0
-  train_size: 128
+  train_size: 10240
 
 
 router:
-  n_heads: 5
+  n_heads: 1
   strategy: neural
   batch_size: 64
   num_batches: 4

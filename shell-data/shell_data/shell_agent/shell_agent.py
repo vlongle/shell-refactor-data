@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import (
     Optional,
+    Callable,
 )
 import torch
 from shell_data.utils.config import ShELLDataSharingConfig
@@ -27,8 +28,9 @@ class ShELLAgent(ABC):
     @abstractmethod
     def data_valuation(self, X: torch.tensor, y: torch.tensor, ll_time: int) -> torch.tensor:
         pass
-    
+
     def train(self, train_dataloader, val_dataloader, n_epochs: int,
-          val_every_n_epoch: int, patience: int, delta: float):
-        return train(self.model, train_dataloader, val_dataloader, n_epochs, val_every_n_epoch, patience, delta)
-    
+              val_every_n_epoch: int, patience: int, delta: float,
+              val_func: Optional[Callable] = None, val_before=True):
+        return train(self.model, train_dataloader, val_dataloader, n_epochs, val_every_n_epoch, patience, delta,
+                     val_func=val_func, val_before=val_before)

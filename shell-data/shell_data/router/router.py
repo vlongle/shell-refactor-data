@@ -8,10 +8,11 @@ from shell_data.task_model.task_model import RegressionTaskModel
 import torch.nn as nn
 import numpy as np
 from typing import Optional
-from shell_data.dataset.buffer import RegressionBuffer
+from shell_data.dataset.buffer import RegressionBuffer, get_dataset_from_buffer
 import logging
-from shell_data.utils.utils import get_dataset_from_buffer
 from shell_data.utils.utils import train
+from functools import partial
+from collections import defaultdict
 
 
 class Router(ABC):
@@ -23,6 +24,8 @@ class Router(ABC):
         super().__init__()
         self.agent = agent
         self.cfg = cfg
+        # indices of the data that the receiver already kept
+        self.to_keeps = defaultdict(list)
 
     @abstractmethod
     def share_with(self, other: ShELLAgent, other_id: int, ll_time: int):
@@ -41,14 +44,19 @@ class ConvenientRouter(Router):
     def __init__(self, agent: ShELLAgent, cfg: RouterConfig) -> None:
         super().__init__(agent, cfg)
 
-    def get_candidate_data(self, other_id: int, ll_time: int) -> torch.utils.data.Dataset:
+    def get_candidate_data(self, other_id: int, ll_time: int, kind="all") -> torch.utils.data.Dataset:
         """
         Get all the data collected by this agent until now
         """
-        data = []
-        for t in range(ll_time+1):
-            data.append(self.agent.ll_dataset.get_train_dataset(t))
-        return torch.utils.data.ConcatDataset(data)
+        # data = []
+        # for t in range(ll_time+1):
+        #     data.append(self.agent.ll_dataset.get_train_dataset(t))
+        # return torch.utils.data.ConcatDataset(data)
+        data = self.agent.ll_dataset.get_train_dataset(ll_time, kind=kind)
+        # if dedup and other_id in self.to_keeps:
+        #     # filter out the data that the receiver already kept
+        #     data = data[~np.in1d(data.y, self.to_keeps[other_id])]
+        return data
 
     def get_candidate_dataloader(self, other_id: int, ll_time: int) -> torch.utils.data.DataLoader:
         dataset = self.get_candidate_data(other_id, ll_time)
@@ -63,7 +71,7 @@ class RandomShellRouter(ConvenientRouter):
     def __init__(self, agent: ShELLAgent, cfg: RouterConfig) -> None:
         super().__init__(agent, cfg)
 
-    def share_with(self, other: ShELLAgent, other_id: int, ll_time: int):
+    def share_with(self, other: ShELLAgent, other_id: int, ll_time: int, record_name=None):
         """
         Send `self.cfg.router.num_batches` batches of data to `other`.
         Each batch is of size `self.cfg.router.batch_size`.
@@ -74,7 +82,42 @@ class RandomShellRouter(ConvenientRouter):
         for X, y in dataloader:
             # pick randomly without replacement
             idx = torch.randperm(len(X))[:self.cfg.batch_size]
-            other.data_valuation(X[idx], y[idx], ll_time)
+            scores, to_keeps = other.data_valuation(
+                X[idx], y[idx], ll_time, record_name=record_name)
+            self.to_keeps[other_id] += to_keeps.tolist()
+
+    def reset(self):
+        pass
+
+
+class OracleShellRouter(ConvenientRouter):
+    def __init__(self, agent: ShELLAgent, cfg: RouterConfig) -> None:
+        super().__init__(agent, cfg)
+
+    def share_with(self, other: ShELLAgent, other_id: int, ll_time: int):
+        """
+        Send `self.cfg.router.num_batches` batches of data to `other`.
+        Each batch is of size `self.cfg.router.batch_size`.
+
+        Select classes that are in other's `past_tasks`
+        """
+        logging.warning("oracle routing...")
+        dataloader = self.get_candidate_dataloader(other_id, ll_time)
+
+        for X, y in dataloader:
+            # viable candidates are those that are in other's past_tasks
+            viable_x = X[np.in1d(y, other.past_tasks)]
+            viable_y = y[np.in1d(y, other.past_tasks)]
+            logging.critical(f"viable {len(viable_x)} / {len(X)}")
+            # pick randomly without replacement
+            idx = torch.randperm(len(viable_x))[:self.cfg.batch_size]
+            scores, to_keeps = other.data_valuation(
+                viable_x[idx], viable_y[idx], ll_time)
+
+            logging.critical(f"{scores} {len(scores)}")
+
+            # this is wrong!!
+            self.to_keeps[other_id] += to_keeps.tolist()
 
     def reset(self):
         pass
@@ -133,11 +176,24 @@ class NeuralShellRouter(ConvenientRouter):
         self.exploration_strategy.update(other_agent_id, action)
         return action
 
+    def val_func(self, early_stopping, head_id, val_dataloader):
+        val_loss = 0.0
+        for val_batch in val_dataloader:
+            val_batch_loss = self.model.val_step(val_batch, head_id=head_id)
+            val_loss += val_batch_loss
+        val_loss /= len(val_dataloader)
+        # logging.info(
+        #     f'epoch: {epoch+1} / {n_epochs}, loss: {train_loss:.3f} | val_loss {val_loss:.3f}')
+        # val_losses.append(val_loss)
+        # calculate the accuracy on the train/val/test set and log it to record
+        return early_stopping.step(val_loss)
+
     # TODO: NOTE: regression loss is very problematic if the class-wise rewards
     # are very different (which is actually the desired behavior for RL and LTR algos),
     # but for supervised bandit regression, different scales of outputs are essentially
     # a "class-imbalance" problem. The network would just learn to predict the big scale
     # for some reasons...
+
     def update_from_buffer(self, other_id: int):
         # NOTE: we don't make sure that val and train sets are disjoint
         buffer = self.buffers[other_id]
@@ -149,7 +205,10 @@ class NeuralShellRouter(ConvenientRouter):
             val_dataset, batch_size=len(val_dataset), shuffle=True)
         return train(self.estimator, train_dataloader, val_dataloader, self.cfg.training.n_epochs, self.cfg.training.val_every_n_epoch, self.cfg.training.patience,
                      self.cfg.training.delta,
-                     head_id=other_id,)
+                     head_id=other_id,
+                     val_func=partial(self.val_func, val_dataloader=val_dataloader,
+                                      head_id=other_id,),
+                     )
 
     # TODO: remember to reset in the outer loop!
 
@@ -160,7 +219,9 @@ class NeuralShellRouter(ConvenientRouter):
             if len(X) < self.cfg.batch_size:
                 continue
             action = self.predict(X, other_id)
-            rewards = other.data_valuation(X[action], y[action], ll_time)
+            rewards, to_keeps = other.data_valuation(
+                X[action], y[action], ll_time)
+            self.to_keeps[other_id] += to_keeps.tolist()
             # NOTE: online optimization without regression buffer
             # loss = self.estimator.train_step(
             #     (X[action], rewards), head_id=other_id)

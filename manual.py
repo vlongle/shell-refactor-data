@@ -1,5 +1,6 @@
 from rich.logging import RichHandler
 from shell_data.dataset.dataset import get_vision_dataset_subsets
+from shell_data.dataset.dataset import get_train_val_test_subsets
 from shell_data.utils.config import (
     ShELLDataSharingConfig,
     validate_config,
@@ -11,7 +12,6 @@ import os
 from itertools import combinations
 from lightning_lite.utilities.seed import seed_everything
 from shell_data.shell_agent.shell_agent_classification import ShELLClassificationAgent
-from shell_data.dataset.dataset import get_train_val_test_subsets
 import logging
 
 
@@ -68,6 +68,8 @@ def main(cfg: ShELLDataSharingConfig):
 
     for ll_time in range(cfg.dataset.num_task_per_life):
         for agent_id, agent in enumerate(agents):
+            if agent_id != 0:
+                continue
             agent.learn_task(ll_time)
             logging.critical(
                 f"agent {agent_id} finished learning task {ll_time}")
@@ -86,18 +88,53 @@ def main(cfg: ShELLDataSharingConfig):
                 before_test_res[agent_id, ll_time, t] = acc
                 before_val_res[agent_id, ll_time, t] = val
 
-        for agent in agents:
-            agent.router.reset()
-
-        for agent_i, agent_j in combinations(range(len(agents)), 2):
-            logging.critical(f"agent {agent_i} share with agent {agent_j}")
-            agents[agent_i].router.share_with(
-                agents[agent_j], other_id=agent_j, ll_time=ll_time)
-            logging.critical(f"agent {agent_j} share with agent {agent_i}")
-            agents[agent_j].router.share_with(
-                agents[agent_i], other_id=agent_i, ll_time=ll_time)
+        # HACK: for random router:
+        if cfg.router.strategy == "random":
+            train_size = 256
+        elif cfg.router.strategy == "neural":
+            train_size = 341
+        else:
+            # no sharing
+            train_size = 0
 
         for agent_id, agent in enumerate(agents):
+            if agent_id == 0:
+                continue
+            my_cls_idxs = set(
+                agents[0].ll_dataset.get_task_indices(ll_time))
+            cls_idxs = agent.ll_dataset.get_task_indices(ll_time)
+            # if cls_idxs contains any of my_cls_idxs, then share
+            for cls_id in cls_idxs:
+                if cls_id in my_cls_idxs:
+                    logging.critical(
+                        f"agent {agent_id} share with agent 0")
+                    dataset = agent.ll_dataset.train_datasets[cls_id]
+                    # only share a subset of the data
+                    dataset = torch.utils.data.Subset(
+                        dataset, range(train_size))
+                    train_loader = torch.utils.data.DataLoader(
+                        dataset, batch_size=cfg.training.batch_size, shuffle=True)
+                    for batch in train_loader:
+                        agents[0].buffer.add_data(batch)
+
+        # now we need to relearn!
+        agents[0].learn_from_buffer(X_cl=None, y_cl=None, ll_time=ll_time,
+                                    buffer_size=cfg.data_valuation.train_size, val_strategy="current")
+
+        # for agent in agents:
+        #     agent.router.reset()
+
+        # for agent_i, agent_j in combinations(range(len(agents)), 2):
+        #     logging.critical(f"agent {agent_i} share with agent {agent_j}")
+        #     agents[agent_i].router.share_with(
+        #         agents[agent_j], other_id=agent_j, ll_time=ll_time)
+        #     logging.critical(f"agent {agent_j} share with agent {agent_i}")
+        #     agents[agent_j].router.share_with(
+        #         agents[agent_i], other_id=agent_i, ll_time=ll_time)
+
+        for agent_id, agent in enumerate(agents):
+            if agent_id != 0:
+                continue
             after_data_dist[agent_id, ll_time, :] = torch.tensor(
                 [len(b) for b in agent.buffer.buffers])
             logging.critical(
@@ -132,7 +169,7 @@ def main(cfg: ShELLDataSharingConfig):
                                           ll_time, :ll_time+1].mean()
             avg_val_improv = (avg_after_val - avg_before_val) / avg_before_val
             logging.critical(
-                f"\t avg test improv {avg_test_improv * 100:.3f}%, avg val improv {avg_val_improv * 100:.3f}%")
+                f"\t before test {avg_before_test * 100:.3f}, after test {avg_after_test * 100:.3f} avg test improv {avg_test_improv * 100:.3f}%, avg val improv {avg_val_improv * 100:.3f}%")
 
         logging.critical("\n")
 

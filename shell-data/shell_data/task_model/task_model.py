@@ -7,8 +7,13 @@ from typing import (
     Optional,
     Union,
 )
-from shell_data.task_model.task_nets import CIFAR10Net, MNISTNet
+from shell_data.task_model.task_nets import (
+    CIFAR10Net,
+    MNISTNet,
+    FashionMNISTNet,
+)
 import logging
+from sklearn.metrics import confusion_matrix
 
 
 class TaskModel(ABC):
@@ -16,6 +21,7 @@ class TaskModel(ABC):
     criterion: nn.Module
     optimizer: torch.optim.Optimizer
     device: Union[torch.device, str]
+    reduction: str
     """
     TaskModel contains a network, loss function, and optimizer.
     It also contains the logic for training, validation, and testing.
@@ -32,15 +38,6 @@ class TaskModel(ABC):
     def test_step(self, batch) -> float:
         pass
 
-# NOTE: head_id is a pretty ugly hack
-
-
-class SupervisedLearningTaskModel(TaskModel):
-    """
-    SupervisedLearningTaskModel must contain a attribute `net` which is a nn.Module.
-    A criterion (loss function) and optimizer must be provided.
-    """
-
     def to_device(self, batch: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Move data batch to the same device as the model.
@@ -51,6 +48,15 @@ class SupervisedLearningTaskModel(TaskModel):
         if y.device != self.device:
             y = y.to(self.device)
         return x, y
+
+# NOTE: head_id is a pretty ugly hack
+
+
+class SupervisedLearningTaskModel(TaskModel):
+    """
+    SupervisedLearningTaskModel must contain a attribute `net` which is a nn.Module.
+    A criterion (loss function) and optimizer must be provided.
+    """
 
     def train_step(self, batch: Tuple[torch.Tensor, torch.Tensor], head_id: Optional[int] = None) -> float:
         x, y = self.to_device(batch)
@@ -79,7 +85,8 @@ class SupervisedLearningTaskModel(TaskModel):
 
 
 class ClassifcationTaskModel(SupervisedLearningTaskModel):
-    def __init__(self, n_classes: int, cfg: Optional[TaskModelConfig] = {}) -> None:
+    def __init__(self, n_classes: int, cfg: Optional[TaskModelConfig] = {},
+                 reduction="sum") -> None:
         if isinstance(cfg, TaskModelConfig):
             cfg = cfg.__dict__
         SupervisedLearningTaskModel.__init__(self)
@@ -89,25 +96,38 @@ class ClassifcationTaskModel(SupervisedLearningTaskModel):
             self.net = CIFAR10Net(n_out=n_classes)
         elif self.task_name == "mnist":
             self.net = MNISTNet(n_out=n_classes)
+        elif self.task_name == "fashion_mnist":
+            self.net = FashionMNISTNet(n_out=n_classes)
         else:
             raise ValueError(f"Unknown task name: {self.task_name}")
         self.cfg = cfg
         self.net.to(self.device)
-        self.criterion = nn.CrossEntropyLoss()
+        self.reduction = reduction
+        self.criterion = nn.CrossEntropyLoss(reduction=self.reduction)
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=0.001)
 
-    def test_acc(self, batch: Tuple[torch.Tensor, torch.Tensor]) -> float:
+    def test_acc(self, batch: Tuple[torch.Tensor, torch.Tensor], ret_confusion_matrix=False) -> float:
         x, y = self.to_device(batch)
         self.net.eval()
         with torch.no_grad():
             y_hat = self.net(x)
             # logging.debug(f"y: {torch.unique(y, return_counts=True)}, y_hat: {torch.unique(y_hat.argmax(dim=1), return_counts=True)}")
-            acc = (y_hat.argmax(dim=1) == y).float().mean()
+            acc = (y_hat.argmax(dim=1) == y).float()
+            if self.reduction == "sum":
+                acc = acc.sum()
+            elif self.reduction == "mean":
+                acc = acc.mean()
+            else:
+                raise ValueError(
+                    "Unknown reduction: {}".format(self.reduction))
+            if ret_confusion_matrix:
+                return acc.item(), confusion_matrix(y.cpu(), y_hat.argmax(dim=1).cpu(),
+                                                    labels=list(range(self.net.n_out)))
             return acc.item()
 
 
 class RegressionTaskModel(SupervisedLearningTaskModel):
-    def __init__(self, n_out: int, cfg: Optional[TaskModelConfig] = {}) -> None:
+    def __init__(self, n_out: int, cfg: Optional[TaskModelConfig] = {}, reduction="mean") -> None:
         if isinstance(cfg, TaskModelConfig):
             cfg = cfg.__dict__
         SupervisedLearningTaskModel.__init__(self)
@@ -121,6 +141,7 @@ class RegressionTaskModel(SupervisedLearningTaskModel):
             raise ValueError(f"Unknown task name: {self.task_name}")
         self.cfg = cfg
         self.net.to(self.device)
+        self.reduction = reduction
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=0.001)
 

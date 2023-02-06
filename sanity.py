@@ -1,5 +1,5 @@
 from rich.logging import RichHandler
-from shell_data.dataset.dataset import get_vision_dataset_subsets
+from shell_data.dataset.dataset import get_train_val_test_subsets
 from shell_data.utils.config import (
     ShELLDataSharingConfig,
     validate_config,
@@ -11,9 +11,8 @@ import os
 from itertools import combinations
 from lightning_lite.utilities.seed import seed_everything
 from shell_data.shell_agent.shell_agent_classification import ShELLClassificationAgent
-from shell_data.dataset.dataset import get_train_val_test_subsets
 import logging
-
+import time
 
 SEED = 0
 seed_everything(SEED)
@@ -24,6 +23,7 @@ cs = ConfigStore.instance()
 cs.store(name="config_schema", node=ShELLDataSharingConfig)
 
 logging.basicConfig(level=logging.CRITICAL,
+                    # logging.basicConfig(level=logging.DEBUG,
                     format="%(message)s",
                     handlers=[RichHandler(rich_tracebacks=True, markup=False, show_time=False, show_path=False)],)
 
@@ -32,6 +32,8 @@ logging.basicConfig(level=logging.CRITICAL,
 def main(cfg: ShELLDataSharingConfig):
     # print(cfg)
     validate_config(cfg)
+
+    start = time.time()
 
     train_subsets, val_subsets, test_subsets = get_train_val_test_subsets(
         cfg.dataset.name)
@@ -43,9 +45,9 @@ def main(cfg: ShELLDataSharingConfig):
     # reset the ll_dataset again and reset the random seed to ensure
     # correct randomness across all routing methods
     seed_everything(SEED)
-    for agent in agents:
+    for agent_id, agent in enumerate(agents):
         agent.ll_dataset.reset()
-        print(agent.ll_dataset.perm)
+        logging.critical(f"agent {agent_id} data: {agent.ll_dataset.perm}")
 
     # before sharing
     before_test_res = torch.zeros(
@@ -86,54 +88,6 @@ def main(cfg: ShELLDataSharingConfig):
                 before_test_res[agent_id, ll_time, t] = acc
                 before_val_res[agent_id, ll_time, t] = val
 
-        for agent in agents:
-            agent.router.reset()
-
-        for agent_i, agent_j in combinations(range(len(agents)), 2):
-            logging.critical(f"agent {agent_i} share with agent {agent_j}")
-            agents[agent_i].router.share_with(
-                agents[agent_j], other_id=agent_j, ll_time=ll_time)
-            logging.critical(f"agent {agent_j} share with agent {agent_i}")
-            agents[agent_j].router.share_with(
-                agents[agent_i], other_id=agent_i, ll_time=ll_time)
-
-        for agent_id, agent in enumerate(agents):
-            after_data_dist[agent_id, ll_time, :] = torch.tensor(
-                [len(b) for b in agent.buffer.buffers])
-            logging.critical(
-                f"AFTER sharing, data dist {after_data_dist[agent_id, ll_time, :]}")
-
-            for t in range(ll_time+1):
-                acc = agent.test(t)
-                val = agent.val(t)
-
-                after_test_res[agent_id, ll_time, t] = acc
-                after_val_res[agent_id, ll_time, t] = val
-
-                test_improv = (
-                    acc - before_test_res[agent_id, ll_time, t]) / before_test_res[agent_id, ll_time, t]
-                val_improv = (
-                    val - before_val_res[agent_id, ll_time, t]) / before_val_res[agent_id, ll_time, t]
-
-                logging.critical(
-                    f"\t after task {t} test acc: {acc:.3f}, improv {test_improv * 100:.3f}%  | val acc: {val:.3f}, improv {val_improv* 100:.3f}% ")
-
-            # compute the avg acc_improv and val_improv
-            avg_before_test = before_test_res[agent_id,
-                                              ll_time, :ll_time+1].mean()
-            avg_after_test = after_test_res[agent_id,
-                                            ll_time, :ll_time+1].mean()
-            avg_test_improv = (
-                avg_after_test - avg_before_test) / avg_before_test
-
-            avg_before_val = before_val_res[agent_id,
-                                            ll_time, :ll_time+1].mean()
-            avg_after_val = after_val_res[agent_id,
-                                          ll_time, :ll_time+1].mean()
-            avg_val_improv = (avg_after_val - avg_before_val) / avg_before_val
-            logging.critical(
-                f"\t avg test improv {avg_test_improv * 100:.3f}%, avg val improv {avg_val_improv * 100:.3f}%")
-
         logging.critical("\n")
 
     root_dir = f"results/seed_{SEED}_strategy_{cfg.router.strategy}_n_agents_{cfg.n_agents}_n_tasks_{cfg.dataset.num_task_per_life}"
@@ -154,6 +108,9 @@ def main(cfg: ShELLDataSharingConfig):
                os.path.join(root_dir, "before_data_dist.pt"))
     torch.save(after_data_dist,
                os.path.join(root_dir, "after_data_dist.pt"))
+
+    end = time.time()
+    print(f"Time taken: {end - start:.3f} sec")
 
 
 if __name__ == "__main__":
