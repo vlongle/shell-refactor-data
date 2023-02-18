@@ -13,6 +13,7 @@ import logging
 from shell_data.utils.utils import train
 from functools import partial
 from collections import defaultdict
+from shell_data.utils.record import Record
 
 
 class Router(ABC):
@@ -44,19 +45,8 @@ class ConvenientRouter(Router):
     def __init__(self, agent: ShELLAgent, cfg: RouterConfig) -> None:
         super().__init__(agent, cfg)
 
-    def get_candidate_data(self, other_id: int, ll_time: int, kind="all") -> torch.utils.data.Dataset:
-        """
-        Get all the data collected by this agent until now
-        """
-        # data = []
-        # for t in range(ll_time+1):
-        #     data.append(self.agent.ll_dataset.get_train_dataset(t))
-        # return torch.utils.data.ConcatDataset(data)
-        data = self.agent.ll_dataset.get_train_dataset(ll_time, kind=kind)
-        # if dedup and other_id in self.to_keeps:
-        #     # filter out the data that the receiver already kept
-        #     data = data[~np.in1d(data.y, self.to_keeps[other_id])]
-        return data
+    def get_candidate_data(self, other_id: int, ll_time: int):
+        return self.agent.get_task_buffer_dataset()
 
     def get_candidate_dataloader(self, other_id: int, ll_time: int) -> torch.utils.data.DataLoader:
         dataset = self.get_candidate_data(other_id, ll_time)
@@ -70,6 +60,7 @@ class ConvenientRouter(Router):
 class RandomShellRouter(ConvenientRouter):
     def __init__(self, agent: ShELLAgent, cfg: RouterConfig) -> None:
         super().__init__(agent, cfg)
+        self.outgoing_data = {}
 
     def share_with(self, other: ShELLAgent, other_id: int, ll_time: int, record_name=None):
         """
@@ -79,12 +70,19 @@ class RandomShellRouter(ConvenientRouter):
         logging.warning("Randomly routing...")
         dataloader = self.get_candidate_dataloader(other_id, ll_time)
 
+        X_sent, y_sent = [], []
         for X, y in dataloader:
             # pick randomly without replacement
             idx = torch.randperm(len(X))[:self.cfg.batch_size]
             scores, to_keeps = other.data_valuation(
                 X[idx], y[idx], ll_time, record_name=record_name)
             self.to_keeps[other_id] += to_keeps.tolist()
+            X_sent.append(X[idx])
+            y_sent.append(y[idx])
+
+        X_sent = torch.cat(X_sent)
+        y_sent = torch.cat(y_sent)
+        self.outgoing_data[(ll_time, other_id)] = X_sent, y_sent
 
     def reset(self):
         pass
@@ -137,6 +135,7 @@ class NeuralShellRouter(ConvenientRouter):
             n_heads=self.n_heads,
             cfg=self.cfg.explore)
 
+        self.out_going_data = {}
         self.estimator = RegressionTaskModel(
             n_out=self.n_heads,
             cfg=self.cfg.estimator_task_model)
@@ -176,10 +175,11 @@ class NeuralShellRouter(ConvenientRouter):
         self.exploration_strategy.update(other_agent_id, action)
         return action
 
-    def val_func(self, early_stopping, head_id, val_dataloader):
+    def val_func(self, early_stopping, head_id, val_dataloader, global_step, epoch, train_loss):
         val_loss = 0.0
         for val_batch in val_dataloader:
-            val_batch_loss = self.model.val_step(val_batch, head_id=head_id)
+            val_batch_loss = self.estimator.val_step(
+                val_batch, head_id=head_id)
             val_loss += val_batch_loss
         val_loss /= len(val_dataloader)
         # logging.info(
@@ -200,7 +200,7 @@ class NeuralShellRouter(ConvenientRouter):
         train_dataset = get_dataset_from_buffer(buffer, self.cfg.train_size)
         val_dataset = get_dataset_from_buffer(buffer, self.cfg.val_size)
         train_dataloader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=self.cfg.batch_size, shuffle=True)
+            train_dataset, batch_size=self.cfg.training.batch_size, shuffle=True)
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset, batch_size=len(val_dataset), shuffle=True)
         return train(self.estimator, train_dataloader, val_dataloader, self.cfg.training.n_epochs, self.cfg.training.val_every_n_epoch, self.cfg.training.patience,
@@ -212,7 +212,21 @@ class NeuralShellRouter(ConvenientRouter):
 
     # TODO: remember to reset in the outer loop!
 
-    def share_with(self, other: ShELLAgent, other_id: int, ll_time: int):
+    def log(self, record, x, y, scores, to_keeps):
+        classes = y.unique().tolist()
+        for clz in classes:
+            record.write(
+                {
+                    "class": clz,
+                    "num_sent": (y == clz).sum().item(),
+                    "avg_scores": scores[y == clz].mean().item(),
+                    "avg_to_keep": to_keeps[y == clz].sum().item(),
+                }
+            )
+
+    def share_with(self, other: ShELLAgent, other_id: int, ll_time: int, record_name=""):
+        record = Record(record_name)
+
         dataloader = self.get_candidate_dataloader(other_id, ll_time)
         logging.debug(f"Sharing with {other_id} at time {ll_time}")
         for step, (X, y) in enumerate(dataloader):
@@ -222,6 +236,10 @@ class NeuralShellRouter(ConvenientRouter):
             rewards, to_keeps = other.data_valuation(
                 X[action], y[action], ll_time)
             self.to_keeps[other_id] += to_keeps.tolist()
+
+            # logging
+            self.log(record, X[action], y[action], rewards, to_keeps)
+
             # NOTE: online optimization without regression buffer
             # loss = self.estimator.train_step(
             #     (X[action], rewards), head_id=other_id)
@@ -229,4 +247,5 @@ class NeuralShellRouter(ConvenientRouter):
             self.buffers[other_id].add_data((X[action], rewards))
             train_losses, val_losses = self.update_from_buffer(other_id)
             logging.warning(
-                f"Routing step {step+1}, size {len(X)}, Train loss: {train_losses[-1]} - Val loss: {val_losses[-1]}")
+                f"Routing step {step+1}, size {len(X)}, Train loss: {train_losses[-1]}")
+        record.save()

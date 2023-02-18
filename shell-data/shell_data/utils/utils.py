@@ -5,23 +5,27 @@ from typing import (
     Optional,
     Callable,
 )
+import numpy as np
 
 
 def train(model, train_dataloader, val_dataloader, n_epochs: int,
           val_every_n_epoch: int, patience: int, delta: float,
-          head_id: Optional[int] = None, val_func: Optional[Callable] = None, val_before=True):
+          head_id: Optional[int] = None, val_func: Optional[Callable] = None, val_before=True,
+          load_best_model=True):
     early_stopping = EarlyStopping(
         net=model.net,
         patience=patience, delta=delta)
 
     train_losses, val_losses = [], []
-    train_loss = 0.0
     global_step = 0
+    train_loss = 0.0
     for epoch in range(n_epochs):
+        epoch_train_losses = []
         # print("epoch:", epoch, "global_step:", global_step)
         if epoch % val_every_n_epoch == 0 and val_before:
             if val_func is not None and val_func(early_stopping=early_stopping, global_step=global_step,
                                                  epoch=epoch,
+                                                 #  train_loss=np.mean(epoch_train_losses)):
                                                  train_loss=train_loss):
                 logging.info(
                     f"Early stopping at epoch {epoch+1} with best val loss {early_stopping.val_loss_min:.3f}")
@@ -30,17 +34,19 @@ def train(model, train_dataloader, val_dataloader, n_epochs: int,
         for batch in train_dataloader:
             train_loss = model.train_step(batch, head_id=head_id)
             train_losses.append(train_loss)
+            epoch_train_losses.append(train_loss)
             global_step += 1
 
         if epoch % val_every_n_epoch == 0 and not val_before:
             if val_func is not None and val_func(early_stopping=early_stopping, global_step=global_step,
                                                  epoch=epoch,
-                                                 train_loss=train_loss):
+                                                 train_loss=np.mean(epoch_train_losses)):
                 logging.info(
                     f"Early stopping at epoch {epoch+1} with best val loss {early_stopping.val_loss_min:.3f}")
                 break
 
-    model.net.load_state_dict(early_stopping.best_model)
+    if load_best_model:
+        model.net.load_state_dict(early_stopping.best_model)
     return train_losses, val_losses
 
 

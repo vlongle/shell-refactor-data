@@ -14,6 +14,7 @@ DATASET_NUM_CLASSES = {
     "mnist": 10,
     "cifar10": 10,
     "fashion_mnist": 10,
+    "cifar100": 100,
 }
 
 
@@ -85,7 +86,7 @@ def get_train_val_test_subsets(dataset_name):
     train_subsets, val_subsets = [], []
     for train_val_subset in train_val_subsets:
         train_subset, val_subset = torch.utils.data.random_split(
-            train_val_subset, [0.9, 0.1])
+            train_val_subset, [0.6, 0.4])
         # train_subset, val_subset = torch.utils.data.random_split(
         #     train_val_subset, [0.5, 0.5])
         train_subsets.append(train_subset)

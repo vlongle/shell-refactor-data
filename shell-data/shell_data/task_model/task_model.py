@@ -11,6 +11,7 @@ from shell_data.task_model.task_nets import (
     CIFAR10Net,
     MNISTNet,
     FashionMNISTNet,
+    CIFAR100Net,
 )
 import logging
 from sklearn.metrics import confusion_matrix
@@ -98,6 +99,8 @@ class ClassifcationTaskModel(SupervisedLearningTaskModel):
             self.net = MNISTNet(n_out=n_classes)
         elif self.task_name == "fashion_mnist":
             self.net = FashionMNISTNet(n_out=n_classes)
+        elif self.task_name == "cifar100":
+            self.net = CIFAR100Net(n_out=n_classes)
         else:
             raise ValueError(f"Unknown task name: {self.task_name}")
         self.cfg = cfg

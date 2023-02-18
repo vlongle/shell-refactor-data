@@ -53,7 +53,14 @@ class SupervisedLearningBuffer(Buffer):
     def dedup(self, data, ret_mask=False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Process data and remove the data that is already in the buffer.
+
+        Return a mask: true if the data is NOT in the buffer. False otherwise.
         """
+        if len(self) == 0:
+            if ret_mask:
+                return torch.ones(len(data[0]), dtype=torch.bool)
+            return data
+
         x, y = data
         distances = knn_dist(x, self.X, k=1)
         # if distances = 0, then the data is already in the buffer and should be removed
@@ -85,13 +92,40 @@ class SupervisedLearningBuffer(Buffer):
 
 
 class ClassifcationBuffer(SupervisedLearningBuffer):
-    def __init__(self, dim):
+    def __init__(self, dim, num_classes):
         super().__init__(dim, 'classification')
+        self.num_classes = num_classes
 
     def get_cls_counts(self):
         # HACK: assume that the num_cls = 10
-        NUM_CLASSES = 10
-        return {f"cls_{i}": (self.y == i).sum().item() for i in range(NUM_CLASSES)}
+        return {f"cls_{i}": (self.y == i).sum().item() for i in range(self.num_classes)}
+
+
+class ReservoirSamplingClassificationBuffer(ClassifcationBuffer):
+    def __init__(self, dim, buffer_size, num_classes):
+        super().__init__(dim, num_classes)
+        self.buffer_size = buffer_size
+        self._buffer_weights = torch.zeros(0)
+
+    # https://avalanche-api.continualai.org/en/v0.1.0/_modules/avalanche/training/storage_policy.html#ReservoirSamplingBuffer
+    def add_data(self, data, dedup=True):
+        if len(data[0]) == 0:
+            return
+        if dedup and len(self) > 0:
+            data = self.dedup(data)
+        x, y = data
+        # self.X = torch.cat((self.X, x))
+        # self.y = torch.cat((self.y, y))
+        new_weights = torch.rand(len(x))
+        cat_weights = torch.cat([new_weights, self._buffer_weights])
+        cat_x = torch.cat([x, self.X])
+        cat_y = torch.cat([y, self.y])
+        sorted_weights, sorted_idxs = cat_weights.sort(descending=True)
+
+        buffer_idxs = sorted_idxs[:self.buffer_size]
+        self.X = cat_x[buffer_idxs]
+        self.y = cat_y[buffer_idxs]
+        self._buffer_weights = sorted_weights[:self.buffer_size]
 
 
 class RegressionBuffer(SupervisedLearningBuffer):

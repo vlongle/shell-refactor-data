@@ -347,4 +347,112 @@ Bunch of data that we want like char24k
 
 ## TODO:
 - implement autoencoder for the other baseline
-- implement reservoir sampling with replay buffer.
+- implement reservoir sampling with replay buffer. [x]
+
+
+
+## TODO
+Need to improve the outlier detection stuff...
+Maybe ensemble a bunch of these detectors!
+
+
+Use Meghna stuff...
+
+
+
+Discrimator vs representation learning
+Decouple represnetation & classifier
+
+https://arxiv.org/pdf/2107.12753.pdf
+
+https://arxiv.org/pdf/1910.09217.pdf
+
+
+https://arxiv.org/abs/2009.08319
+
+
+
+# TODO
+use a separate data sharing buffer to reduce interference with known good class!
+
+
+
+http://seba1511.net/tutorials/intermediate/dist_tuto.html
+torch parallel
+
+
+Actually, the lifelong ER might be implemented a bit wrong!
+
+Might be a problem of not training enough??
+
+
+Tricks to improve receiver_first:
+
+- changed mean to upper percentile upper bound to improve the outlier detection! [DONE]
+- Try other query strategy instead of wrongly_predicted to something else. [DONE],
+will use wrongly + confidence
+- Run other random seeds! Reduce the variance around the curve!
+- We know that receiver ground truth is really good, which means that we need to further IMPROVE the outlier. (Probably not?) detection (using fancier open set recognition on MNIST!) [NOPE]
+LAST RESORT...
+- increase n_epochs from 200 to 500 to improve the image search quality.
+- increase n_epochs from 20 to 50 to ensure convergence?
+
+Thresholding tempering: https://github.com/KulikDM/pythresh
+
+
+
+
+Mix 3 applications.
+
+MNIST, FashionMNIST, KoreanMNIST.
+Try to get this interleaved. Experiments.
+
+
+
+Share linear combination of models and stuff...
+
+
+
+5 components, have 
+
+same init of components across agents.
+
+
+SMOTE rebalance to work on fashionMNIST
+
+
+
+
+At num_queries = 25
+Class Multinomial resampler
+
+Accuracy at task ll_time = 1
+buffer train 10 epochs: 87%
+
+buffer train 20 epochs (same as task) train more: 90%
+
+
+SMOTE on raw features (flatten)
+0.943945 (we're fucking back babyyyy!!)
+
+SMOTE on encoded features
+pretty bad lol... drop down to around 87%
+
+
+
+NEXT:
+Should increase num_queries back to 50 to further separate the curve between the baseline and ours! 
+
+NOTE: might have to use some special loss from the deepSMOTE and/or VAE to make sure that the synthetic samples are properly reconstructed
+(because vanilla autoencoder cannot ensure that!)
+
+
+
+As noted by
+Arjovsky et al. [13], many generative deep learning models
+effectively incorporate a penalty, or noise, term in their loss
+function, to impart diversity into the model distribution. For
+example, both VAEs and WAEs include penalty terms in their
+loss functions. We use permutation, instead of SMOTE, during
+training because it is more memory and computationally
+efficient

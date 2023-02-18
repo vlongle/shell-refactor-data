@@ -3,3 +3,4 @@ data/
 outputs/
 *egg-info/
 results/
+*mnist*

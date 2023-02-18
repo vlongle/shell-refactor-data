@@ -25,12 +25,8 @@ class ShELLAgent(ABC):
     def test(self, ll_time: int, type_: str = "acc"):
         pass
 
-    @abstractmethod
-    def data_valuation(self, X: torch.tensor, y: torch.tensor, ll_time: int) -> torch.tensor:
-        pass
-
     def train(self, train_dataloader, val_dataloader, n_epochs: int,
               val_every_n_epoch: int, patience: int, delta: float,
-              val_func: Optional[Callable] = None, val_before=True):
+              val_func: Optional[Callable] = None, val_before=True, load_best_model=True):
         return train(self.model, train_dataloader, val_dataloader, n_epochs, val_every_n_epoch, patience, delta,
-                     val_func=val_func, val_before=val_before)
+                     val_func=val_func, val_before=val_before, load_best_model=load_best_model)

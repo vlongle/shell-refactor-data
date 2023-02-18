@@ -50,8 +50,8 @@ class BotlzmanExploration(ExplorationStrategy):
         return actions
 
     def update(self, actions: np.ndarray):
-        self.eps *= max(self.cfg.decay_rate *
-                        self.eps, self.cfg.min_epsilon)
+        self.eps = max(self.cfg.decay_rate *
+                       self.eps, self.cfg.min_epsilon)
 
 
 class ShELLBotlzmanExploration:
