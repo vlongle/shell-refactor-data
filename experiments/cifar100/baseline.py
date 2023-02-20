@@ -48,7 +48,7 @@ def main():
     size = 256
     num_cls_per_task = 5
     num_task_per_life = 20
-    n_epochs = 20
+    n_epochs = 50
     buffer_size = size * 4
     n_agents = 1
 
@@ -67,7 +67,8 @@ def main():
         training=TrainingConfig(
             n_epochs=n_epochs,
             # basically not doing early stopping
-            batch_size=32,
+            # batch_size=32,
+            batch_size=64,
             patience=1000,
             val_every_n_epoch=1,
         ),
