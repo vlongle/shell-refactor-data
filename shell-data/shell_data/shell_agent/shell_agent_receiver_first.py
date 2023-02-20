@@ -135,9 +135,10 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
 
         global_step = 0
         for epoch in range(self.cfg.receiver_first.n_epochs):
-            if epoch % 50 == 0:
+            if epoch % 25 == 1:
                 logging.info(
-                    f"Epoch {epoch}/{self.cfg.receiver_first.n_epochs} loss {np.mean(losses)}")
+                    f"Epoch {epoch+1}/{self.cfg.receiver_first.n_epochs} loss {np.nanmean(losses):.3f}, cont_loss {np.nanmean(cont_losses):.3f}, rec_loss {np.nanmean(rec_losses):.3f},"
+                    f"cac loss {np.nanmean(cac_losses):.3f} (n={n_classes})")
             for batch in dataloader:
                 x, y = batch
 
@@ -170,6 +171,7 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
 
                 # RECONSTRUCTION LOSS (autoencoder)
                 rec_loss = rl(x, self.recognizer.reconstruct(x))
+                # rec_loss = torch.tensor([0.0])
 
                 # CAC LOSS
                 # check device of recognizer
@@ -178,6 +180,7 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
                 cac_loss = self.cac(distances, y)
 
                 loss = cont_loss + cac_loss + rec_loss
+                # loss = cont_loss + cac_loss
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -201,8 +204,8 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
                 global_step += 1
 
         # use the Mahalanobis detector
-        self.detector = Mahalanobis(self.recognizer.features)
-        self.detector.fit(dataloader, device=self.cfg.task_model.device)
+        # self.detector = Mahalanobis(self.recognizer.features)
+        # self.detector.fit(dataloader, device=self.cfg.task_model.device)
 
         # NOTE: move this out, so that the outlier score
         # are calculated at once!
@@ -266,13 +269,14 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
                 outlier_score = self.detector(x)
         return outlier_score
 
-    def remove_outliers(self, queries, ll_time, requester):
+    def remove_outliers(self, queries, ll_time=None, requester=None):
         """
         outlier_mask returns 1 for outliers and 0 for inliers
         """
         X, y = queries
         if X.shape[0] == 0:
-            self.outliers[(ll_time, requester)] = X, y
+            if ll_time is not None and requester is not None:
+                self.outliers[(ll_time, requester)] = X, y
             return X, y
         X = X.to(self.cfg.task_model.device)
         y = y.to(self.cfg.task_model.device)
@@ -282,12 +286,12 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
 
         buf_x = torch.concat([buf_x.cuda(), X.cuda()])
         comb_cac_scores = self.outlier_score_cac(buf_x)
-        comb_detector_scores = self.outlier_score_detector(buf_x)
+        # comb_detector_scores = self.outlier_score_detector(buf_x)
 
-        cac_upper_bound = np.quantile(
-            comb_cac_scores.cpu(), self.cfg.receiver_first.outlier_std)
-        detector_upper_bound = np.quantile(
-            comb_detector_scores.cpu(), self.cfg.receiver_first.outlier_std)
+        # cac_upper_bound = np.quantile(
+        #     comb_cac_scores.cpu(), self.cfg.receiver_first.outlier_std)
+        # detector_upper_bound = np.quantile(
+        #     comb_detector_scores.cpu(), self.cfg.receiver_first.outlier_std)
 
         # max_contam = self.cfg.receiver_first.threshold_init_max_contam * \
         #     (self.cfg.receiver_first.threshold_decay_rate) ** ll_time
@@ -300,21 +304,22 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
         # piecewise constant max_contam so that 0,1: 0.5, 2,3: 0.3; 4: 0.1
 
         max_contam = 0.5
-        if self.cfg.receiver_first.funky_threshold:
-            if ll_time in [0, 1]:
-                max_contam = 0.5
-            elif ll_time in [2, 3]:
-                max_contam = 0.3
-            elif ll_time in [4]:
-                max_contam = 0.1
+        # if self.cfg.receiver_first.funky_threshold:
+        #     if ll_time in [0, 1]:
+        #         max_contam = 0.5
+        #     elif ll_time in [2, 3]:
+        #         max_contam = 0.3
+        #     elif ll_time in [4]:
+        #         max_contam = 0.1
 
-        if self.cfg.receiver_first.outlier_method == "cac_contrastive":
-            cac_scores = self.outlier_score_cac(X)
-            detector_scores = self.outlier_score_detector(X)
-            # AND (we can also use OR), but AND balances the outlier detection rate, and accuracy
-            outlier_mask = (cac_scores > cac_upper_bound) & (
-                detector_scores > detector_upper_bound)
-        elif self.cfg.receiver_first.outlier_method == "ground_truth":
+        # if self.cfg.receiver_first.outlier_method == "cac_contrastive":
+        #     cac_scores = self.outlier_score_cac(X)
+        #     detector_scores = self.outlier_score_detector(X)
+        #     # AND (we can also use OR), but AND balances the outlier detection rate, and accuracy
+        #     outlier_mask = (cac_scores > cac_upper_bound) & (
+        #         detector_scores > detector_upper_bound)
+        # elif self.cfg.receiver_first.outlier_method == "ground_truth":
+        if self.cfg.receiver_first.outlier_method == "ground_truth":
             # get the index of y where y is not in self.past_tasks
             outlier_mask = torch.tensor(
                 [y_i not in self.past_tasks for y_i in y])
@@ -324,10 +329,10 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
             # eval returns 0 for inliers and 1 for outliers
             comb_outlier_mask = thres.eval(comb_cac_scores.cpu())
             outlier_mask = torch.tensor(comb_outlier_mask[-X.shape[0]:]).bool()
-        elif self.cfg.receiver_first.outlier_method == "pythresh_detector":
-            thres = ALL(method="median", max_contam=max_contam)
-            comb_outlier_mask = thres.eval(comb_detector_scores.cpu())
-            outlier_mask = torch.tensor(comb_outlier_mask[-X.shape[0]:]).bool()
+        # elif self.cfg.receiver_first.outlier_method == "pythresh_detector":
+        #     thres = ALL(method="median", max_contam=max_contam)
+        #     comb_outlier_mask = thres.eval(comb_detector_scores.cpu())
+        #     outlier_mask = torch.tensor(comb_outlier_mask[-X.shape[0]:]).bool()
         elif self.cfg.receiver_first.outlier_method == "pythresh_filter":
             thres = FILTER()
             comb_outlier_mask = thres.eval(comb_cac_scores.cpu())
@@ -336,7 +341,10 @@ class ShellAgentReceiverFirst(ShELLClassificationAgent):
             outlier_mask = torch.tensor([False] * X.shape[0])
         else:
             raise NotImplementedError
-        self.outliers[(ll_time, requester)] = X[outlier_mask], y[outlier_mask]
+
+        if ll_time is not None and requester is not None:
+            self.outliers[(ll_time, requester)
+                          ] = X[outlier_mask], y[outlier_mask]
         return X[~outlier_mask], y[~outlier_mask]
 
     def _image_search(self, queries, ll_time, requester):

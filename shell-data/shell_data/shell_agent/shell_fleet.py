@@ -96,7 +96,7 @@ class ShellFleet:
             pickle.dump(agent, f)
 
     def learn_task_agent(self, agent, ll_time, metric="val_acc", load_best_model=False):
-        record_name = f"{self.dir}/{agent.name}_task_{ll_time}"
+        record_name = f"{self.dir}/{agent.name}_task_{ll_time}.csv"
         agent.learn_task(ll_time, record_name=record_name,
                          metric=metric, load_best_model=load_best_model)
         self.pickle_agent(agent, info=f"task_{ll_time}")
@@ -107,11 +107,11 @@ class ShellFleet:
                 self.agents[i] = pickle.load(f)
 
     def learn_task(self, ll_time, metric="val_acc"):
-        for agent in self.agents:
-            self.learn_task_agent(agent, ll_time, metric=metric)
-        # with Pool(processes=self.n_agents) as pool:
-        #     pool.starmap(self.learn_task_agent, [
-        #                  (agent, ll_time, metric) for agent in self.agents])
+        # for agent in self.agents:
+        #     self.learn_task_agent(agent, ll_time, metric=metric)
+        with Pool(processes=self.n_agents) as pool:
+            pool.starmap(self.learn_task_agent, [
+                         (agent, ll_time, metric) for agent in self.agents])
 
         self.load_agents(info=f"task_{ll_time}")
 
@@ -121,7 +121,7 @@ class ShellFleet:
             agent.add_buffer_task(ll_time)
 
     def learn_from_buffer_agent(self, agent, ll_time, val_before=False, load_best_model=False):
-        record_name = f"{self.dir}/{agent.name}_learn_buffer_{ll_time}"
+        record_name = f"{self.dir}/{agent.name}_learn_buffer_{ll_time}.csv"
         agent.learn_from_buffer(ll_time, record_name=record_name,
                                 val_before=val_before, load_best_model=load_best_model)
 
@@ -196,7 +196,7 @@ class ShellFleetReceiverFirst(ShellFleet):
         self.sharing_record = Record(f"{self.dir}/sharing.csv")
 
     def train_data_searcher_agent(self, agent, ll_time):
-        record_name = f"{self.dir}/{agent.name}_searcher_task_{ll_time}"
+        record_name = f"{self.dir}/{agent.name}_searcher_task_{ll_time}.csv"
         agent.train_data_searcher(ll_time, record_name=record_name)
         self.pickle_agent(agent, info=f"searcher_task_{ll_time}")
 
@@ -230,6 +230,12 @@ class ShellFleetReceiverFirst(ShellFleet):
 
         for agent in self.agents:
             for (ll_time, requester), data in agent.outgoing_data.items():
+                # TODO: add an open set recognizer on top of this to discard bad data!
+                # data = self.agents[requester].remove_outliers(
+                #     data, ll_time=ll_time, requester=f"{requester}_remove_before_add")
+                # X, y = data
+                # self.agents[requester].sharing_buffer.add_data(
+                #     (X.cpu(), y.cpu()))
                 self.agents[requester].sharing_buffer.add_data(data)
 
     def seek_data_agent(self, agent_i: int, agent_j: int, ll_time: int):

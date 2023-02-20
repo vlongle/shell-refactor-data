@@ -456,3 +456,14 @@ example, both VAEs and WAEs include penalty terms in their
 loss functions. We use permutation, instead of SMOTE, during
 training because it is more memory and computationally
 efficient
+
+
+
+TODO:
+investigate why training on extreme tail classes decay the test performance so much?
+Forgetting? https://liuziwei7.github.io/projects/LongTail.html#:~:text=We%20define%20Open%20Long%2DTailed,%2C%20tail%2C%20and%20open%20classes.
+
+
+
+TODO:
+the image search for fashion MNIST is EXTREMELY TRASH!!

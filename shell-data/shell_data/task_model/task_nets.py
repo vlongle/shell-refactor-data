@@ -231,7 +231,7 @@ class MNISTRecognizer(nn.Module):
             nn.MaxPool2d(2, 2),  # 4 x 7 x 7
         )
 
-        # decoder goes from self.embedding back to the original image
+        # # decoder goes from self.embedding back to the original image
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(4, 16, 2, stride=2),
             nn.ReLU(),

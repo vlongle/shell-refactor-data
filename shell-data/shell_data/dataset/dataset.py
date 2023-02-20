@@ -8,6 +8,7 @@ from typing import (
     Dict,
 )
 from shell_data.utils.config import DatasetConfig
+import os
 
 
 DATASET_NUM_CLASSES = {
@@ -52,6 +53,8 @@ def get_vision_dataset_subsets(dataset_name: Optional[str] = "mnist", train: Opt
     # dim of dataset (channel, height, width)
     logging.debug(f"dataset dim: {dataset[0][0].shape}")
     subsets = []
+    if not os.path.exists(f"./data/cv/{dataset_name}"):
+        os.makedirs(f"./data/cv/{dataset_name}")
     for i in range(DATASET_NUM_CLASSES[dataset_name]):
         # if ./data/mnist_{i}.pt exists, load it
         # otherwise, create it

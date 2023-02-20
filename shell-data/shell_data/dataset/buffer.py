@@ -64,7 +64,7 @@ class SupervisedLearningBuffer(Buffer):
         x, y = data
         distances = knn_dist(x, self.X, k=1)
         # if distances = 0, then the data is already in the buffer and should be removed
-        eps = 0.1  # HACK: because of floating point error
+        eps = 0.01  # HACK: because of floating point error
         mask = distances > eps
         logging.debug(f"No. of duplicates: {len(mask) - mask.sum()}")
         if ret_mask:

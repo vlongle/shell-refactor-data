@@ -18,7 +18,7 @@ from functools import partial
 
 from torchsampler import ImbalancedDatasetSampler
 
-from imblearn.over_sampling import SMOTE, ADASYN
+from imblearn.over_sampling import SMOTE, ADASYN, SVMSMOTE, KMeansSMOTE
 from imblearn.combine import SMOTEENN, SMOTETomek
 
 
@@ -134,13 +134,20 @@ class ShELLClassificationAgent(ShELLAgent):
     def rebalance(self, X, y):
         """
         Basically, https://arxiv.org/pdf/2105.02340.pdf (deepSMOTE)
+
+        TODO: 
+        1. throw away extreme class
+        2. include SMOTE or other
+        3. include VAE.
         """
         # return X, y
-        # X.shape = (n, c, h, w) needs to reshape to (n, c*h*w)
+
+        # X.shape = (n, c, h, w) needs to reshape to(n, c*h*w)
 
         # with torch.no_grad():
         #     X = self.recognizer.embedding(
         #         X.to(self.cfg.task_model.device)).cpu()
+
         X = X.reshape(X.shape[0], -1)  # (n, embedding_dim)
         y = y.reshape(-1)
         # NOTE: SMOTE() expects that each class contains n_samples >= n_neighbors
@@ -151,12 +158,16 @@ class ShELLClassificationAgent(ShELLAgent):
         # NOTE: this is a hacky way to do this, but it works for now
         y_unique, y_counts = torch.unique(y, return_counts=True)
         y_props = y_counts / y_counts.sum()
-        good_cls = y_unique[y_props > 0.05 * y_props.max()]
+        good_cls = y_unique[y_props > 0.2 * y_props.max()]
         idx = torch.isin(y, good_cls)
         X = X[idx]
         y = y[idx]
 
-        X_resampled, y_resampled = SMOTE().fit_resample(X, y)
+        # X = X.reshape(X.shape[0], *self.dim)  # (n, embedding_dim)
+        # return X, y
+
+        # X_resampled, y_resampled = KMeansSMOTE().fit_resample(X, y)
+        X_resampled, y_resampled = SVMSMOTE().fit_resample(X, y)
         # X_resampled, y_resampled = SMOTEENN().fit_resample(X, y)
         X_resampled = torch.from_numpy(X_resampled)  # (new_n, embedding_dim)
         y_resampled = torch.from_numpy(y_resampled)
