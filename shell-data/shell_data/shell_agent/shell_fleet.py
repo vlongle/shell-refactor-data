@@ -107,11 +107,11 @@ class ShellFleet:
                 self.agents[i] = pickle.load(f)
 
     def learn_task(self, ll_time, metric="val_acc"):
-        for agent in self.agents:
-            self.learn_task_agent(agent, ll_time, metric=metric)
-        # with Pool(processes=self.n_agents) as pool:
-        #     pool.starmap(self.learn_task_agent, [
-        #                  (agent, ll_time, metric) for agent in self.agents])
+        # for agent in self.agents:
+        #     self.learn_task_agent(agent, ll_time, metric=metric)
+        with Pool(processes=self.n_agents) as pool:
+            pool.starmap(self.learn_task_agent, [
+                         (agent, ll_time, metric) for agent in self.agents])
 
         self.load_agents(info=f"task_{ll_time}")
 
